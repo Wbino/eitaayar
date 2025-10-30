@@ -20,6 +20,10 @@ export default function Home() {
   const [progress, setProgress] = useState<number>(0);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
 
+  // ✅ فقط دکمه را رفرش کن — با استفاده از useState کم‌تغییر و ref
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
+
   const handlePasteFromClipboard = async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -31,6 +35,15 @@ export default function Home() {
       }
     } catch {
       toast.error("دسترسی به کلیپ‌بورد مجاز نیست ⚠️");
+    }
+  };
+
+  const handleCancel = () => {
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+      toast.info("ارسال لغو شد ❌");
+      setLoading(false);
+      setProgress(0);
     }
   };
 
@@ -46,8 +59,8 @@ export default function Home() {
 
     setLoading(true);
     setProgress(0);
-    const unixTimestamp = Math.floor(scheduleDate.getTime() / 1000);
 
+    const unixTimestamp = Math.floor(scheduleDate.getTime() / 1000);
     const formData = new FormData();
     formData.append("message", message);
     if (file) formData.append("file", file);
@@ -58,15 +71,13 @@ export default function Home() {
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
-        const percent = Math.round((event.loaded / event.total) * 100);
-        setProgress(percent);
+        setProgress(Math.round((event.loaded / event.total) * 100));
       }
     };
 
     xhr.onload = () => {
       setLoading(false);
       setProgress(0);
-
       try {
         const data = JSON.parse(xhr.responseText);
         if (data.ok) {
@@ -74,8 +85,7 @@ export default function Home() {
           setMessage("");
           setFile(null);
           setScheduleDate(null);
-          const inputFile = document.getElementById("file-input") as HTMLInputElement;
-          if (inputFile) inputFile.value = "";
+          (document.getElementById("file-input") as HTMLInputElement).value = "";
         } else {
           toast.error("خطا در ارسال: " + (data.description || "نامشخص"));
         }
@@ -89,7 +99,12 @@ export default function Home() {
       toast.error("خطا در برقراری ارتباط با سرور ❌");
     };
 
-    xhr.timeout = 1000 * 60 * 5; // ⏳ ۵ دقیقه
+    xhr.onabort = () => {
+      setLoading(false);
+      toast.info("درخواست لغو شد ❌");
+    };
+
+    xhr.timeout = 1000 * 60 * 5;
     xhr.ontimeout = () => {
       setLoading(false);
       toast.error("زمان ارسال طولانی شد و متوقف گردید ⚠️");
@@ -124,7 +139,7 @@ export default function Home() {
             چسباندن از کلیپ‌بورد 📋
           </Button>
         </div>
-        
+
         {/* فایل */}
         <div className="space-y-2">
           <Label className="text-sm">انتخاب فایل (اختیاری)</Label>
@@ -147,8 +162,7 @@ export default function Home() {
                 size="sm"
                 onClick={() => {
                   setFile(null);
-                  const inputFile = document.getElementById("file-input") as HTMLInputElement;
-                  if (inputFile) inputFile.value = "";
+                  (document.getElementById("file-input") as HTMLInputElement).value = "";
                   toast.info("فایل حذف شد ❌");
                 }}
               >
@@ -160,18 +174,15 @@ export default function Home() {
           {/* پیش‌نمایش فایل */}
           {file && (
             <div className="mt-2 p-2 rounded-md border border-border bg-muted/30 flex flex-col items-center gap-2">
-              {/* ویدیو */}
               {file.type.startsWith("video/") && (
                 <video
                   src={URL.createObjectURL(file)}
                   className="rounded-md max-h-48 w-full object-contain"
-                  controls={false}
+                  controls
                   muted
                   playsInline
                 />
               )}
-
-              {/* تصویر */}
               {file.type.startsWith("image/") && (
                 <img
                   src={URL.createObjectURL(file)}
@@ -179,8 +190,6 @@ export default function Home() {
                   className="rounded-md max-h-48 w-auto object-contain"
                 />
               )}
-
-              {/* اطلاعات فایل */}
               <div className="text-xs text-center text-muted-foreground w-full break-words">
                 <p>📎 {file.name}</p>
                 <p>
@@ -210,8 +219,8 @@ export default function Home() {
               <input
                 type="text"
                 value={value}
-                onClick={openCalendar} // ✅ کلیک روی فیلد → باز شدن پاپ‌آپ
-                readOnly // ✅ جلوی باز شدن کیبورد گرفته میشه
+                onClick={openCalendar}
+                readOnly
                 className="w-full bg-background text-foreground p-2 border border-border rounded-md text-center cursor-pointer select-none"
                 placeholder="انتخاب تاریخ و ساعت..."
               />
@@ -219,20 +228,36 @@ export default function Home() {
           />
         </div>
 
+        {/* دکمه‌ها */}
+        <div className="space-y-2 flex flex-col items-center">
+          {!loading && (
+            <Button
+              onClick={handleSubmit}
+              className="w-full mt-4 h-12 text-lg font-bold"
+            >
+              ارسال پیام
+            </Button>
+          )}
 
-        {/* دکمه ارسال */}
-        <div className="space-y-2">
-          <Button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full mt-4 h-12 text-lg font-bold"
-          >
-            {loading
-              ? progress > 0
-                ? `در حال ارسال... ${progress}%`
-                : "در حال آپلود..."
-              : "ارسال پیام"}
-          </Button>
+          {loading && (
+            <div className="flex flex-col w-full items-center">
+              <Button
+                disabled
+                className="w-full h-12 text-lg font-bold opacity-80"
+              >
+                {progress > 0
+                  ? `در حال ارسال... ${progress}%`
+                  : "در حال آپلود..."}
+              </Button>
+              <Button
+                onClick={handleCancel}
+                variant="destructive"
+                className="w-1/2 mt-2"
+              >
+                لغو ارسال ❌
+              </Button>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-4">

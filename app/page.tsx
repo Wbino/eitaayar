@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,10 +17,26 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [scheduleDate, setScheduleDate] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<number>(0);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setMessage(text);
+        toast.info("متن از کلیپ‌بورد وارد شد ✨");
+      } else {
+        toast.warning("کلیپ‌بورد خالیه 📋");
+      }
+    } catch {
+      toast.error("دسترسی به کلیپ‌بورد مجاز نیست ⚠️");
+    }
+  };
 
   const handleSubmit = async () => {
     if (!message && !file) {
-      toast.error("هیچ متنی یا فایلی برای ارسال وارد نشده ❌");
+      toast.error("هیچ متنی یا فایلی وارد نشده ❌");
       return;
     }
     if (!scheduleDate) {
@@ -29,6 +45,7 @@ export default function Home() {
     }
 
     setLoading(true);
+    setProgress(0);
     const unixTimestamp = Math.floor(scheduleDate.getTime() / 1000);
 
     const formData = new FormData();
@@ -36,61 +53,151 @@ export default function Home() {
     if (file) formData.append("file", file);
     formData.append("date", unixTimestamp.toString());
 
-    try {
-      const res = await fetch("/api/send", {
-        method: "POST",
-        body: formData,
-      });
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
 
-      const data = await res.json();
-      if (data.ok) {
-        toast.success("پیام با موفقیت زمان‌بندی شد ✅");
-        setMessage("");
-        setFile(null);
-        setScheduleDate(null);
-      } else {
-        toast.error("خطا در ارسال: " + (data.description || "نامشخص"));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        setProgress(percent);
       }
-    } catch (err) {
-      toast.error("ارتباط با سرور برقرار نشد ⚠️");
-    } finally {
+    };
+
+    xhr.onload = () => {
       setLoading(false);
-    }
+      setProgress(0);
+
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.ok) {
+          toast.success("پیام با موفقیت زمان‌بندی شد ✅");
+          setMessage("");
+          setFile(null);
+          setScheduleDate(null);
+          const inputFile = document.getElementById("file-input") as HTMLInputElement;
+          if (inputFile) inputFile.value = "";
+        } else {
+          toast.error("خطا در ارسال: " + (data.description || "نامشخص"));
+        }
+      } catch {
+        toast.error("پاسخ نامعتبر از سرور ⚠️");
+      }
+    };
+
+    xhr.onerror = () => {
+      setLoading(false);
+      toast.error("خطا در برقراری ارتباط با سرور ❌");
+    };
+
+    xhr.timeout = 1000 * 60 * 5; // ⏳ ۵ دقیقه
+    xhr.ontimeout = () => {
+      setLoading(false);
+      toast.error("زمان ارسال طولانی شد و متوقف گردید ⚠️");
+    };
+
+    xhr.open("POST", "/api/send");
+    xhr.send(formData);
   };
 
   return (
-    <div className="min-h-screen bg-background dark:bg-neutral-900 text-foreground dark:text-neutral-100 flex items-center justify-center p-4">
-      <Toaster position="top-right" richColors />
+    <div className="h-screen w-full flex items-center justify-center bg-background text-foreground">
+      <Toaster position="top-center" richColors />
 
-      <Card className="w-full max-w-md md:max-w-lg p-6 space-y-5 shadow-lg bg-card dark:bg-neutral-800 border border-border">
-        <h1 className="text-2xl font-bold text-center mb-4">
-          زمان‌بندی پیام ایتا
-        </h1>
+      <Card className="w-[90%] max-w-sm p-6 space-y-5 shadow-md bg-card border border-border rounded-2xl">
+        <h1 className="text-xl font-bold text-center mb-2">زمان‌بندی پیام ایتا</h1>
 
+        {/* متن پیام */}
         <div className="space-y-2">
-          <Label>متن پیام</Label>
+          <Label className="text-sm">متن پیام</Label>
           <Textarea
             placeholder="متن پیام را بنویس..."
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            className="resize-none h-32"
+            className="resize-none h-28 text-base"
           />
+          <Button
+            type="button"
+            onClick={handlePasteFromClipboard}
+            variant="secondary"
+            className="w-full mt-1 text-sm"
+          >
+            چسباندن از کلیپ‌بورد 📋
+          </Button>
+        </div>
+        
+        {/* فایل */}
+        <div className="space-y-2">
+          <Label className="text-sm">انتخاب فایل (اختیاری)</Label>
+
+          <div className="flex items-center gap-2">
+            <Input
+              id="file-input"
+              type="file"
+              accept="*/*"
+              onChange={(e) => {
+                const selected = e.target.files?.[0] || null;
+                setFile(selected);
+              }}
+              className="cursor-pointer flex-1"
+            />
+            {file && (
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setFile(null);
+                  const inputFile = document.getElementById("file-input") as HTMLInputElement;
+                  if (inputFile) inputFile.value = "";
+                  toast.info("فایل حذف شد ❌");
+                }}
+              >
+                حذف
+              </Button>
+            )}
+          </div>
+
+          {/* پیش‌نمایش فایل */}
+          {file && (
+            <div className="mt-2 p-2 rounded-md border border-border bg-muted/30 flex flex-col items-center gap-2">
+              {/* ویدیو */}
+              {file.type.startsWith("video/") && (
+                <video
+                  src={URL.createObjectURL(file)}
+                  className="rounded-md max-h-48 w-full object-contain"
+                  controls={false}
+                  muted
+                  playsInline
+                />
+              )}
+
+              {/* تصویر */}
+              {file.type.startsWith("image/") && (
+                <img
+                  src={URL.createObjectURL(file)}
+                  alt="preview"
+                  className="rounded-md max-h-48 w-auto object-contain"
+                />
+              )}
+
+              {/* اطلاعات فایل */}
+              <div className="text-xs text-center text-muted-foreground w-full break-words">
+                <p>📎 {file.name}</p>
+                <p>
+                  نوع: {file.type || "نامشخص"} — حجم:{" "}
+                  {(file.size / (1024 * 1024)).toFixed(2)} مگابایت
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* تاریخ و ساعت */}
         <div className="space-y-2">
-          <Label>انتخاب فایل (اختیاری)</Label>
-          <Input
-            type="file"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label>تاریخ و ساعت ارسال</Label>
+          <Label className="text-sm">تاریخ و ساعت ارسال</Label>
           <DatePicker
             calendar={persian}
             locale={persian_fa}
-            calendarPosition="bottom-right"
             format="YYYY/MM/DD HH:mm"
             value={scheduleDate}
             onChange={(date: any) => {
@@ -98,20 +205,37 @@ export default function Home() {
               setScheduleDate(jsDate || null);
             }}
             plugins={[<TimePicker position="bottom" />]}
-            className="w-full !bg-background !text-foreground !p-2 !border !border-border rounded-md"
-            placeholder="انتخاب تاریخ و ساعت..."
+            inputMode="none"
+            render={(value, openCalendar) => (
+              <input
+                type="text"
+                value={value}
+                onClick={openCalendar} // ✅ کلیک روی فیلد → باز شدن پاپ‌آپ
+                readOnly // ✅ جلوی باز شدن کیبورد گرفته میشه
+                className="w-full bg-background text-foreground p-2 border border-border rounded-md text-center cursor-pointer select-none"
+                placeholder="انتخاب تاریخ و ساعت..."
+              />
+            )}
           />
         </div>
 
-        <Button
-          onClick={handleSubmit}
-          disabled={loading}
-          className="w-full mt-4 font-bold text-lg"
-        >
-          {loading ? "در حال زمان‌بندی..." : "ارسال پیام زمان‌بندی‌شده"}
-        </Button>
 
-        <p className="text-center text-sm text-muted-foreground mt-3">
+        {/* دکمه ارسال */}
+        <div className="space-y-2">
+          <Button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="w-full mt-4 h-12 text-lg font-bold"
+          >
+            {loading
+              ? progress > 0
+                ? `در حال ارسال... ${progress}%`
+                : "در حال آپلود..."
+              : "ارسال پیام"}
+          </Button>
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground mt-4">
           ساخته شده با ❤️ برای مامان
         </p>
       </Card>
